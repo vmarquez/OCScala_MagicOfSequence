@@ -8,43 +8,58 @@ object MagicOfSequence {
   import argonaut._, Argonaut._
   import scalaz._, Scalaz._
 
+  /*
+    import ocscala._
+    import scala.concurrent.{ExecutionContext, Await, Future}
+    import scala.concurent.duration._
+    MagicOfSeqequence.getF  
+  */
   val initialUser = "vmarquez"
   val usersUrl  = "https://api.github.com/users/"
   val organizationsURL = "http://api.github.com/"
-
-  def getGithubUser(user: String)(implicit ec: ExecutionContext): Future[\/[String, GithubUser]] = {
-    Http(url(usersUrl + user) OK as.String).map(str => str.decodeEither[GithubUser])
+  
+  case class Credentials(user: String, password: String)
+  
+  def getGithubUser(userUrl: String, credentials: Credentials)(implicit ec: ExecutionContext): Future[\/[String, GithubUser]] = {
+    println("usersURL = " + userUrl)
+    val myurl = url(userUrl).as_!(credentials.user, credentials.password)
+    Http(myurl OK as.String).map(str => str.decodeEither[GithubUser])
   }
 
-  def getUsers(usersUrl: String)(implicit ec: ExecutionContext): Future[\/[String, List[GithubUser]]] =
-    Http(url(usersUrl) OK as.String).map(str => str.decodeEither[List[GithubUser]])
+  def getUsers(usersUrl: String, credentials: Credentials)(implicit ec: ExecutionContext): Future[\/[String, List[GithubUser]]] = {
+    val myurl = url(usersUrl).as_!(credentials.user, credentials.password)
+    Http(myurl OK as.String).map(str => str.decodeEither[List[GithubUser]])
+  }
 
-  def transform(users: List[String]): Future[\/[String, List[String]]] = {
-    val futures: List[Future[\/[String, GithubUser]]] = users.map(loginName => getGithubUser(loginName)) //Future[\/[String, GithubUser]]
+  def transform(users: List[String], credentials: Credentials): Future[\/[String, List[String]]] = {
+    println("users = " + users)
+    val futures: List[Future[\/[String, GithubUser]]] = users.map(userurl => getGithubUser(userurl, credentials)) //Future[\/[String, GithubUser]]
     val futureList: Future[List[\/[String, GithubUser]]] = flipMyFutures(futures) 
     futureList.map(list => {
-      val eitherList: \/[String, List[GithubUser]] = list.sequenceU //from Scalaz 
-      eitherList.map(l => l.map(user => user.login)) 
+      val eitherList: \/[String, List[GithubUser]] = list.sequenceU //from Scalaz if we have time, we'll implement it ourself here! 
+      eitherList.map(l => l.map(user => user.name)) 
     })
   }
 
   def flipMyFutures[A](futures: List[Future[A]]): Future[List[A]] = ???
     //futures.foldLeft(Future { List[A]() })( WHAT GOES HERE?????  :-O
 
-  def transformersGetNamesOfFollowers(login: String)(implicit ec: ExecutionContext): Future[\/[String, List[String]]] =
+  //when we get a list of our followers, it doesn't give us their actual name! So we have to requery! let's do it concurrently. 
+  def getNamesOfFollowers(login: String, password: String)(implicit ec: ExecutionContext): Future[\/[String, List[String]]] = {
+    val credentials = Credentials(login, password) 
     (for {
-      ghu       <- EitherT(getGithubUser(login))
-      followers <- EitherT(getUsers(ghu.followers_url))
+      ghu       <- EitherT(getGithubUser(usersUrl + login, credentials))
+      followers <- EitherT(getUsers(ghu.followers_url, credentials))
       urlList   = followers.map(u => usersUrl + u.login)
-      names    <- EitherT(transform(urlList))
+      names    <- EitherT(transform(urlList, credentials))
     } yield {
       names 
      }).run
- 
+  } 
 }
 
 object Data {
-
+  
   case class GithubUser(
     login: String, 
     id: Int,
@@ -54,7 +69,9 @@ object Data {
     followers_url: String,
     following_url: String,
     name: String)
-
+  /*
+   IGNORE EVERYTHING HERE.  I Just picked a JSON library, any will work! 
+   */
   import argonaut._
   import Argonaut._
   implicit def decodeGithubUser: DecodeJson[GithubUser] = {
@@ -81,7 +98,7 @@ object Data {
   } 
 
  
-
+  /* Some test data for playing in the REPL */
   val followersFollowingData = """
  [{
     "login": "jmk",
